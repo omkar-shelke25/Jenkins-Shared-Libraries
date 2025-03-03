@@ -1,6 +1,6 @@
 def call() {
     dependencyCheck(
-        additionalArguments: '--scan ./ --format ALL',
+        additionalArguments: '--scan ./ --format ALL --nvdApiKey $NVD_API_KEY',
         odcInstallation: 'OWASP'
     )
     dependencyCheckPublisher(
