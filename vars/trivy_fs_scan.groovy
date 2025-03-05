@@ -1,5 +1,7 @@
 def call(){
-    sh 'trivy fs .'
+    sh 'trivy fs --scanners vuln .'
+    //sh 'trivy fs .'
+    
 }
 
 
