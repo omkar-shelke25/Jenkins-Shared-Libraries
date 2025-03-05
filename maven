@@ -1,0 +1,175 @@
+@Library("Sharable") _
+
+pipeline {
+    agent { label 'jenkins-agent' }
+
+    environment {
+        SONAR_TOKEN = credentials('sonar-token')
+        ARTIFACTORY_CREDENTIALS = credentials('artifactory-creds')
+        DOCKER_CREDENTIALS = credentials('docker-hub')
+        SLACK_WEBHOOK = credentials('slack-webhook')
+    }
+
+    options {
+        timeout(time: 40, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage("Checkout The Code") {
+            steps {
+                script {
+                    checkout scm
+                }
+            }
+        }
+
+        stage("Code Quality: Checkstyle") {
+            steps {
+                script {
+                    echo "Running Checkstyle..."
+                    sh "mvn checkstyle:check"
+                }
+            }
+        }
+
+        stage("Security Scan: OWASP Dependency-Check") {
+            steps {
+                script {
+                    echo "Running Dependency Check..."
+                    sh "mvn org.owasp:dependency-check-maven:check"
+                }
+            }
+        }
+
+        stage("Code Quality: SonarQube") {
+            steps {
+                script {
+                    sh "mvn sonar:sonar -Dsonar.projectKey=my-app -Dsonar.login=$SONAR_TOKEN"
+                }
+            }
+        }
+
+        stage("Run Unit Tests") {
+            steps {
+                script {
+                    echo "Running Unit Tests..."
+                    sh "mvn test"
+                    junit '**/target/surefire-reports/*.xml'
+                }
+            }
+        }
+
+        stage("Run Integration Tests") {
+            steps {
+                script {
+                    echo "Running Integration Tests..."
+                    sh "mvn verify -Pintegration-tests"
+                    junit '**/target/failsafe-reports/*.xml'
+                }
+            }
+        }
+
+        stage("Database Migrations") {
+            steps {
+                script {
+                    echo "Applying Database Migrations..."
+                    sh "mvn flyway:migrate"
+                }
+            }
+        }
+
+        stage("Performance Testing") {
+            steps {
+                script {
+                    echo "Running Performance Tests..."
+                    sh "k6 run load-test.js"
+                }
+            }
+        }
+
+        stage("Build Application") {
+            steps {
+                script {
+                    echo "Building the application..."
+                    sh "mvn clean package -DskipTests"
+                }
+            }
+        }
+
+        stage("Containerization: Build & Push Docker Image") {
+            steps {
+                script {
+                    echo "Building Docker Image..."
+                    sh """
+                        docker build -t my-app:latest .
+                        echo $DOCKER_CREDENTIALS | docker login -u my-user --password-stdin
+                        docker tag my-app:latest my-dockerhub-repo/my-app:latest
+                        docker push my-dockerhub-repo/my-app:latest
+                    """
+                }
+            }
+        }
+
+        stage("Deploy to Staging") {
+            steps {
+                script {
+                    echo "Deploying to Staging..."
+                    sh "./deploy.sh staging"
+                }
+            }
+        }
+
+        stage("Deploy to Production") {
+            steps {
+                script {
+                    echo "Deploying to Production..."
+                    sh "./deploy.sh production"
+                }
+            }
+        }
+
+        stage("Post-Deployment Health Check") {
+            steps {
+                script {
+                    echo "Running Health Check..."
+                    sh "curl -f http://my-app.com/actuator/health || exit 1"
+                }
+            }
+        }
+
+        stage("Rollback on Failure") {
+            when {
+                expression { currentBuild.result == 'FAILURE' }
+            }
+            steps {
+                script {
+                    echo "Rolling back to previous version..."
+                    sh "./rollback.sh"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                node {
+                    echo 'Cleaning up workspace...'
+                    cleanWs()
+                }
+            }
+        }
+        success {
+            echo 'Pipeline executed successfully!'
+            sh "curl -X POST -H 'Content-Type: application/json' --data '{\"text\": \"✅ Jenkins Build Success!\"}' $SLACK_WEBHOOK"
+        }
+        failure {
+            script {
+                echo 'Pipeline failed! Sending notifications...'
+                sh "curl -X POST -H 'Content-Type: application/json' --data '{\"text\": \"❌ Jenkins Build Failed!\"}' $SLACK_WEBHOOK"
+            }
+        }
+    }
+}
