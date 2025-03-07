@@ -5,6 +5,6 @@ def call(String imageName, String tag) {
     withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
         
         // Push the tagged Docker image to Docker Hub or your Artifactory
-        sh "docker build -t ${USERNAME}/${imageName}:${tag}"
+        sh "docker build -t ${USERNAME}/${imageName}:${tag} ."
     }
 }
